@@ -26,12 +26,14 @@ POLAR_WEIGHTS = ((42, 96), (96,), (96, 96), (96,), (96, len(POLAR_ACTIONS)), (le
 
 
 class Crashball:
-    def __init__(self, exe, data, view=False, arena="crashball", hero=0, teacher=False):
+    def __init__(self, exe, data, view=False, arena="crashball", hero=0, teacher=False, repeat=1):
         self.arena = arena
         self.hero = hero
         command = [str(exe.resolve()), "--training-view" if view else "--training", "--data", str(data.resolve())]
         if arena == "polar-panic":
             command.append("--training-polar")
+            if repeat > 1:
+                command.extend(("--training-polar-repeat", str(repeat)))
         if teacher:
             command.append("--training-teacher")
         self.process = subprocess.Popen(
@@ -40,7 +42,7 @@ class Crashball:
         )
         try:
             mode = "Polar Panic" if arena == "polar-panic" else "Crashball"
-            vblanks = 2 if arena == "polar-panic" else 6
+            vblanks = 2 * repeat if arena == "polar-panic" else 6
             if self.receive() != {"version": 1, "mode": mode, "vblanks_per_step": vblanks}:
                 raise RuntimeError("Unsupported simulator protocol")
         except BaseException:
@@ -167,7 +169,8 @@ def winner(result):
 
 
 def simulator(args, view=False, teacher=False):
-    return Crashball(args.exe, args.data, view=view, arena=args.arena, hero=args.hero, teacher=teacher)
+    return Crashball(args.exe, args.data, view=view, arena=args.arena, hero=args.hero, teacher=teacher,
+                     repeat=getattr(args, "repeat", 1))
 
 
 def player_states(result, players, rng):
@@ -185,6 +188,12 @@ def checkpoint_policy(args):
     import numpy as np
 
     with np.load(args.weights, allow_pickle=False) as checkpoint:
+        if "polar_ppo" in checkpoint:
+            if args.arena != "polar-panic":
+                raise ValueError("Polar Panic PPO weights require --arena polar-panic")
+            from polar_ppo import load_policy
+
+            return load_policy(checkpoint)
         if "polar_parameters" in checkpoint:
             parameters = checkpoint["polar_parameters"].tolist()
             if args.arena != "polar-panic" or len(parameters) != len(polar_policy.PARAMETER_BOUNDS):
@@ -533,6 +542,10 @@ def main():
             with np.load(args.weights, allow_pickle=False) as checkpoint:
                 if "hero" in checkpoint:
                     args.hero = int(checkpoint["hero"])
+                if "polar_ppo" in checkpoint:
+                    args.repeat = int(checkpoint["repeat"]) if "repeat" in checkpoint else 1
+                    if args.repeat not in (1, 2, 3):
+                        parser.error("Unsupported Polar Panic checkpoint action repeat")
         if args.command in ("evaluate", "train", "evolve") and args.max_steps is None:
             args.max_steps = 3600 if args.arena == "polar-panic" else 3000
     if args.command != "convert" and not 0 <= args.seed < 2**32:

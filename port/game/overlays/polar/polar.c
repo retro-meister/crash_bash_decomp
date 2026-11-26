@@ -6,6 +6,7 @@
 #include "bash/hero.h"
 #include "bash/shell.h"
 #include "bash/extraheroes.h"
+#include "../../../platform/training.h"
 
 /* the exe's data the tables point at, not declared in the headers yet */
 /* engine.h declares it, but polar.c does not include that */
@@ -4516,6 +4517,10 @@ s32 PolarHeroCollisions(s32 player) {
                     snd = Random(4);
                     ang = get_angle(dx, dz) & 0xFFF;
                     d = range - d + 8;
+                    if (GameMode == TRAINING_POLAR_PANIC_MODE && h->hero_mode == 0x51 &&
+                        h->hero_move->x_vel * dx + h->hero_move->z_vel * dz > 32 * 256) {
+                        training_contact(player, 1);
+                    }
                     PolarHeroesCollide(player, i);
                     spd = ((EXTheromove *)e)->x_vel * ((EXTheromove *)e)->x_vel + ((EXTheromove *)e)->z_vel * ((EXTheromove *)e)->z_vel;
                     hit = 1;

@@ -1,7 +1,67 @@
 #include "../../platform/training.h"
+#include "../../platform/platform.h"
 #include "bash/arkenoid_ovl.h"
 #include "bash/main.h"
+#include "bash/polar.h"
 #include "bash/polar_ovl.h"
+
+static void polar_training_terrain(TrainingFrame *frame) {
+    static const int directions[TRAINING_EDGE_RAYS][2] = {
+        {0, 256}, {181, 181}, {256, 0}, {181, -181}, {0, -256}, {-181, -181}, {-256, 0}, {-181, 181}
+    };
+    const SLONG_XYZ origin = Heroes[0].hero_eng->XYZ;
+    int distances[TRAINING_OBSTACLES] = {0};
+    int on_ice = CheckMelted(&Heroes[0].hero_eng->XYZ, 0);
+    int buttons;
+    int i;
+
+    training_pad(0, &buttons);
+    frame->square_held = (buttons & PAD_SQUARE) != 0;
+    for (i = 0; i < TRAINING_EDGE_RAYS; i++) {
+        int lo = 0, hi = on_ice ? 4096 : 0;
+        while (hi - lo > 32) {
+            const int d = (lo + hi) / 2;
+            SLONG_XYZ point = origin;
+            point.x += d * directions[i][0] / 256;
+            point.z += d * directions[i][1] / 256;
+            if (CheckMelted(&point, 0)) {
+                lo = d;
+            } else {
+                hi = d;
+            }
+        }
+        frame->edge[i] = lo;
+    }
+    frame->obstacle_count = 0;
+    for (i = 0; i < 80 && PolarIceObjects[i] != NULL; i++) {
+        const subengine *object = PolarIceObjects[i];
+        int dx, dz, distance, slot;
+        if (!(object->flags & 0x8000)) {
+            continue;
+        }
+        dx = object->XYZ.x - origin.x;
+        dz = object->XYZ.z - origin.z;
+        distance = dx * dx + dz * dz;
+        slot = frame->obstacle_count;
+        if (slot == TRAINING_OBSTACLES) {
+            if (distance >= distances[slot - 1]) {
+                continue;
+            }
+            slot--;
+        } else {
+            frame->obstacle_count++;
+        }
+        while (slot > 0 && distance < distances[slot - 1]) {
+            distances[slot] = distances[slot - 1];
+            frame->obstacles[slot][0] = frame->obstacles[slot - 1][0];
+            frame->obstacles[slot][1] = frame->obstacles[slot - 1][1];
+            slot--;
+        }
+        distances[slot] = distance;
+        frame->obstacles[slot][0] = dx;
+        frame->obstacles[slot][1] = dz;
+    }
+}
 
 static void polar_training_snapshot(TrainingFrame *frame) {
     int i;
@@ -29,7 +89,12 @@ static void polar_training_snapshot(TrainingFrame *frame) {
         state[7] = frame->score[i];
         state[8] = hero->hero_name;
         state[9] = hero->hero_ai ? hero->hero_ai->AIpad : 0;
+        state[10] = hero->hero_mode == 0x51 && hero->hero_anim ? hero->hero_anim->Aindex : 0;
+        state[11] = hero->hero_frozen;
+        state[12] = polar && polar->val >= PolarHeroAttackPower(i);
+        state[13] = hero->hero_move ? hero->hero_move->mass : 0;
     }
+    polar_training_terrain(frame);
 }
 
 int training_snapshot(TrainingFrame *frame, int arena) {

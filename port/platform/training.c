@@ -7,6 +7,7 @@
 
 static int Enabled, PendingMatch;
 static int View, Arena, Teacher, FinishVblanks;
+static int SamplesPerStep;
 static int Buttons[TRAINING_PLAYERS];
 static int Contacts[TRAINING_PLAYERS][2];
 static TrainingMatch Match;
@@ -76,14 +77,15 @@ static void read_command(int allow_step) {
     platform_finish(ferror(stdin) ? 1 : 0);
 }
 
-void training_start(int view, int arena, int teacher) {
+void training_start(int view, int arena, int teacher, int repeat) {
     Enabled = 1;
     View = view;
     Arena = arena;
     Teacher = teacher;
-    reply(arena == TRAINING_POLAR_PANIC_MODE
-        ? "@training {\"version\":1,\"mode\":\"Polar Panic\",\"vblanks_per_step\":2}"
-        : "@training {\"version\":1,\"mode\":\"Crashball\",\"vblanks_per_step\":6}");
+    SamplesPerStep = arena == TRAINING_POLAR_PANIC_MODE ? repeat : TRAINING_FRAMES;
+    printf("@training {\"version\":1,\"mode\":\"%s\",\"vblanks_per_step\":%d}",
+           arena == TRAINING_POLAR_PANIC_MODE ? "Polar Panic" : "Crashball", SamplesPerStep * TRAINING_SAMPLE_VBLANKS);
+    reply("");
     read_command(0);
 }
 
@@ -123,8 +125,20 @@ static void write_frames(int count, int done) {
                    f->ice_radius, f->clock, f->winner);
             for (j = 0; j < TRAINING_PLAYERS; j++) {
                 const int *p = f->polar[j];
-                printf("%s[%d,%d,%d,%d,%d,%d,%d,%d,%d,%d]", j == 0 ? "" : ",",
-                       p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7], p[8], p[9]);
+                int k;
+                printf("%s[%d", j == 0 ? "" : ",", p[0]);
+                for (k = 1; k < TRAINING_POLAR_FIELDS; k++) {
+                    printf(",%d", p[k]);
+                }
+                printf("]");
+            }
+            printf("],\"square_held\":%d,\"edge\":[%d", f->square_held, f->edge[0]);
+            for (j = 1; j < TRAINING_EDGE_RAYS; j++) {
+                printf(",%d", f->edge[j]);
+            }
+            printf("],\"obstacles\":[");
+            for (j = 0; j < f->obstacle_count; j++) {
+                printf("%s[%d,%d]", j == 0 ? "" : ",", f->obstacles[j][0], f->obstacles[j][1]);
             }
             printf("]}");
             continue;
@@ -146,7 +160,7 @@ static void write_frames(int count, int done) {
 
 int training_vblank(void) {
     TrainingFrame *frame;
-    int alive = 0, done, i;
+    int alive = 0, done, first_polar_frame, i;
 
     if (FinishVblanks != 0) {
         return --FinishVblanks == 0;
@@ -172,9 +186,10 @@ int training_vblank(void) {
     if (!Started && (!frame->round_active || alive < 2)) {
         return 0;
     }
+    first_polar_frame = !Started && Arena == TRAINING_POLAR_PANIC_MODE;
     Started = 1;
     done = alive < 2 || !frame->round_active;
-    if (++FrameCount == (Arena == TRAINING_POLAR_PANIC_MODE ? 1 : TRAINING_FRAMES) || done) {
+    if (++FrameCount == SamplesPerStep || first_polar_frame || done) {
         write_frames(FrameCount, done);
         if (View && done) {
             FinishVblanks = 120;
