@@ -139,30 +139,42 @@ def evaluate(args):
     if args.policy:
         policies = (args.policy,)
     started = time.perf_counter()
-    with Crashball(args.exe, args.data) as env:
+    with ExitStack() as stack:
+        count = min(args.workers, args.episodes)
+        environments = [stack.enter_context(Crashball(args.exe, args.data)) for _ in range(count)]
+        end_seed = args.seed + args.episodes
         for policy in policies:
             wins = losses = truncated = steps = points = 0
-            for seed in range(args.seed, args.seed + args.episodes):
-                rng = random.Random(seed)
-                result = env.reset(seed, difficulty=args.difficulty)
+            for start_seed in range(args.seed, end_seed, count):
+                batch = [(env, random.Random(seed), env.reset(seed, difficulty=args.difficulty))
+                         for env, seed in zip(environments, range(start_seed, min(end_seed, start_seed + count)))]
                 for _ in range(args.max_steps):
-                    action = 0
-                    if policy == "random":
-                        action = rng.randrange(4)
-                    elif policy == "checkpoint":
-                        action = predict(observation(result, 0, rng), weights, np)
-                    result = env.step(action)
-                    steps += 1
-                    if score(result)[0] == 0:
-                        losses += 1
+                    if not batch:
                         break
-                    if result["done"]:
-                        wins += sum(value > 0 for value in score(result)) == 1
-                        truncated += sum(value > 0 for value in score(result)) != 1
-                        break
-                else:
-                    truncated += 1
-                points += score(result)[0]
+                    for env, rng, result in batch:
+                        action = 0
+                        if policy == "random":
+                            action = rng.randrange(4)
+                        elif policy == "checkpoint":
+                            action = predict(observation(result, 0, rng), weights, np)
+                        env.send_step(action)
+                    remaining = []
+                    steps += len(batch)
+                    for env, rng, _ in batch:
+                        result = env.receive()
+                        scores = score(result)
+                        if scores[0] == 0:
+                            losses += 1
+                        elif result["done"]:
+                            won = sum(value > 0 for value in scores) == 1
+                            wins += won
+                            truncated += not won
+                            points += scores[0]
+                        else:
+                            remaining.append((env, rng, result))
+                    batch = remaining
+                truncated += len(batch)
+                points += sum(score(result)[0] for _, _, result in batch)
             print(json.dumps(dict(policy=policy, difficulty=args.difficulty, episodes=args.episodes,
                                   wins=wins, losses=losses, truncated=truncated, steps=steps,
                                   mean_score=points / args.episodes)), flush=True)
@@ -325,12 +337,12 @@ def main():
         if name in ("evaluate", "train"):
             command.add_argument("--weights", type=Path)
             command.add_argument("--max-steps", type=int, default=3000)
+            command.add_argument("--workers", type=int, default=1, help="Number of concurrent native simulators")
         if name == "evaluate":
             command.add_argument("--episodes", type=int, default=10)
             command.add_argument("--policy", choices=("idle", "random", "checkpoint"), help="Evaluate only this policy")
         if name == "train":
             command.add_argument("--steps", type=int, default=20_000)
-            command.add_argument("--workers", type=int, default=1, help="Number of concurrent native simulators")
             command.add_argument("--players", type=int, choices=range(1, 5), default=1, help="Seats controlled by the learning policy in each arena")
             command.add_argument("--checkpoint-step", action="append", type=int, default=[], help="Save an intermediate checkpoint at this step count (repeatable)")
             command.add_argument("--exploration-steps", type=int, help="Steps over which to reduce exploration (default: training budget)")
