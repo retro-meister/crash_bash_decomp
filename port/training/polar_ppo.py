@@ -98,7 +98,9 @@ def difficulty(rng, elapsed, curriculum):
 
 def demonstrations(args, envs, rng, torch):
     coach = checkpoint_policy(SimpleNamespace(arena=args.arena, weights=args.coach))
-    results = [env.reset(rng.getrandbits(32), difficulty=args.difficulty) for env in envs]
+    for env in envs:
+        env.send_reset(rng.getrandbits(32), difficulty=args.difficulty)
+    results = [env.receive() for env in envs]
     states, masks, actions = [], [], []
     while len(actions) < args.coach_steps:
         active = envs[:min(len(envs), args.coach_steps - len(actions))]
@@ -111,11 +113,15 @@ def demonstrations(args, envs, rng, torch):
             masks.append(can_charge)
             actions.append(action)
             env.send_step(action)
+        resetting = []
         for i, env in enumerate(active):
             result = env.receive()
             if result["done"] or score(result)[0] == 0:
-                result = env.reset(rng.getrandbits(32), difficulty=args.difficulty)
+                env.send_reset(rng.getrandbits(32), difficulty=args.difficulty)
+                resetting.append(i)
             results[i] = result
+        for i in resetting:
+            results[i] = envs[i].receive()
     return torch.tensor(states), torch.tensor(masks), torch.tensor(actions)
 
 
@@ -163,7 +169,6 @@ def train(args):
     done = 0
     updates = 0
     next_report = args.report_every
-    results = []
     levels = []
     counters = defaultdict(lambda: [0, 0, 0])
     args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -190,16 +195,17 @@ def train(args):
             seeds = range(args.validate_seed, args.validate_seed + args.validate_rounds)
             best_wins = -1
 
-        def reset(env):
+        def request_reset(env):
             level = difficulty(rng, done, args.curriculum) if args.curriculum else args.difficulty
             if done < args.drill_steps and rng.random() > done / args.drill_steps:
-                return env.reset(rng.getrandbits(32), players=rng.choice((2, 3, 4)), difficulty=0), 3
-            return env.reset(rng.getrandbits(32), difficulty=level), level
+                env.send_reset(rng.getrandbits(32), players=rng.choice((2, 3, 4)), difficulty=0)
+                return 3
+            env.send_reset(rng.getrandbits(32), difficulty=level)
+            return level
 
         for env in envs:
-            result, level = reset(env)
-            results.append(result)
-            levels.append(level)
+            levels.append(request_reset(env))
+        results = [env.receive() for env in envs]
         potentials = [edge_potential(result) for result in results]
         while done < args.steps:
             horizon = min(args.horizon, (args.steps - done) // args.workers)
@@ -222,6 +228,7 @@ def train(args):
                 for env, action in zip(envs, actions[t].tolist(), strict=True):
                     env.send_step(action)
                 done += args.workers
+                resetting = []
                 for i, env in enumerate(envs):
                     result = env.receive()
                     alive = score(result)[0] > 0
@@ -237,10 +244,13 @@ def train(args):
                     if terminal:
                         counters[levels[i]][0] += 1
                         counters[levels[i]][1] += won
-                        result, levels[i] = reset(env)
-                        potential = edge_potential(result)
+                        levels[i] = request_reset(env)
+                        resetting.append(i)
                     results[i] = result
                     potentials[i] = potential
+                for i in resetting:
+                    results[i] = envs[i].receive()
+                    potentials[i] = edge_potential(results[i])
 
             with torch.no_grad():
                 obs, legal = zip(*(observation(result) for result in results))

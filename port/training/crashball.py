@@ -26,7 +26,7 @@ POLAR_WEIGHTS = ((42, 96), (96,), (96, 96), (96,), (96, len(POLAR_ACTIONS)), (le
 
 
 class Crashball:
-    def __init__(self, exe, data, view=False, arena="crashball", hero=0, teacher=False, repeat=1):
+    def __init__(self, exe, data, view=False, arena="crashball", hero=0, teacher=False, repeat=1, hybrid=False):
         self.arena = arena
         self.hero = hero
         command = [str(exe.resolve()), "--training-view" if view else "--training", "--data", str(data.resolve())]
@@ -34,7 +34,9 @@ class Crashball:
             command.append("--training-polar")
             if repeat > 1:
                 command.extend(("--training-polar-repeat", str(repeat)))
-        if teacher:
+        if hybrid:
+            command.append("--training-polar-hybrid")
+        elif teacher:
             command.append("--training-teacher")
         self.process = subprocess.Popen(
             command,
@@ -84,7 +86,11 @@ class Crashball:
         return self.receive()
 
     def reset(self, seed, players=1, difficulty=2):
-        return self.command(f"reset {seed % 2**32} {players} {difficulty} {self.hero}")
+        self.send_reset(seed, players, difficulty)
+        return self.receive()
+
+    def send_reset(self, seed, players=1, difficulty=2):
+        self.send(f"reset {seed % 2**32} {players} {difficulty} {self.hero}")
 
     def send_step(self, *actions):
         buttons = ([POLAR_ACTIONS[action] for action in actions] if self.arena == "polar-panic"
@@ -208,8 +214,10 @@ def measure(args, environments, seeds, choose_action):
     wins = losses = truncated = steps = points = opponents = 0
     count = len(environments)
     for start in range(0, len(seeds), count):
-        batch = [(env, random.Random(seed), env.reset(seed, difficulty=args.difficulty))
-                 for env, seed in zip(environments, seeds[start:start + count])]
+        group = list(zip(environments, seeds[start:start + count]))
+        for env, seed in group:
+            env.send_reset(seed, difficulty=args.difficulty)
+        batch = [(env, random.Random(seed), env.receive()) for env, seed in group]
         for _ in range(args.max_steps):
             if not batch:
                 break

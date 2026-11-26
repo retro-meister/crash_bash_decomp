@@ -97,6 +97,21 @@ static void polar_training_snapshot(TrainingFrame *frame) {
     polar_training_terrain(frame);
 }
 
+int training_polar_status(void) {
+    int alive = 0, i;
+
+    if (GameMode != TRAINING_POLAR_PANIC_MODE || WinCounterState != 4) {
+        return 0;
+    }
+    for (i = 0; i < TRAINING_PLAYERS; i++) {
+        if (Heroes[i].hero_eng == NULL) {
+            return 0;
+        }
+        alive += !(Heroes[i].hero_status & 0xA000);
+    }
+    return alive >= 2 && !(Heroes[0].hero_status & 0xA000) ? 1 : 2;
+}
+
 int training_snapshot(TrainingFrame *frame, int arena) {
     NAS *ball;
     int i;

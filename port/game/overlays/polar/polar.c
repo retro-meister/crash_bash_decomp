@@ -12214,6 +12214,10 @@ s32 PolarTestAttack(s32 player) {
         pad = pads + player;
         if (pad->dirPressed & 0x8000) {
             if (h->hero_mode != 0x51) {
+                if (GameMode == TRAINING_POLAR_PANIC_MODE && h->hero_name == TRAINING_TINY &&
+                    training_charge_choice(player, (pad->angle.lo + 0x800) & 0xFFF)) {
+                    return 0;
+                }
                 SetHeroAction(player, 0x51);
             }
             return 1;
@@ -12453,6 +12457,12 @@ void PolarHeroAttackThrow(s32 player) {
                 h = base + player;
             }
             if (h->hero_anim->Aindex == 6) {
+                if (GameMode == TRAINING_POLAR_PANIC_MODE) {
+                    int turn = training_charge_turn(player);
+                    if (turn != 0) {
+                        move->forward_angle = (move->forward_angle + turn) & 0xFFF;
+                    }
+                }
                 POLAR_AIM(move, player);
                 move->x_max = 0;
                 move->z_max = 0;

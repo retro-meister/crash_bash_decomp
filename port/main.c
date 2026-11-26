@@ -585,7 +585,7 @@ int main(int argc, char **argv) {
     int training = 0;
     int training_view = 0;
     int training_arena = TRAINING_CRASHBALL_MODE;
-    int training_teacher = 0;
+    int training_teacher = TRAINING_INPUT;
     int training_repeat = 1;
 
 #ifdef SDL_PLATFORM_ANDROID
@@ -804,7 +804,9 @@ int main(int argc, char **argv) {
         } else if (strcmp(argv[i], "--training-polar") == 0) {
             training_arena = TRAINING_POLAR_PANIC_MODE;
         } else if (strcmp(argv[i], "--training-teacher") == 0) {
-            training_teacher = 1;
+            training_teacher = TRAINING_TEACHER;
+        } else if (strcmp(argv[i], "--training-polar-hybrid") == 0) {
+            training_teacher = TRAINING_HYBRID;
         } else if (strcmp(argv[i], "--training-polar-repeat") == 0) {
             if (++i == argc || strlen(argv[i]) != 1 || argv[i][0] < '1' || argv[i][0] > '3') {
                 fprintf(stderr, "--training-polar-repeat requires 1, 2 or 3\n");
@@ -991,6 +993,11 @@ int main(int argc, char **argv) {
        clock (docs/PORT.md, Online play) */
     online = net.host != NULL || net.join != NULL || net.replay != NULL;
     Replaying = net.replay != NULL;
+    if (training_teacher == TRAINING_HYBRID &&
+        (!training || training_arena != TRAINING_POLAR_PANIC_MODE || training_view || training_repeat != 1)) {
+        fprintf(stderr, "--training-polar-hybrid requires headless Polar Panic training with single-tick controls\n");
+        return 2;
+    }
     if (training) {
         if (online || StopAt >= 0 || test_mode >= 0 || test_adventure || test_challenge >= 0 || launcher || (training_view && NoWindow)) {
             fprintf(stderr, "--training controls the match, clock and controllers\n");

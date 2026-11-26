@@ -13,6 +13,7 @@ static int Contacts[TRAINING_PLAYERS][2];
 static TrainingMatch Match;
 static TrainingFrame Frames[TRAINING_FRAMES];
 static int FrameCount, Started, Vblanks;
+static int ChargeTurn, ChargeAngle, ProbeAt;
 
 static void reply(const char *message) {
     puts(message);
@@ -50,6 +51,7 @@ static void read_command(int allow_step) {
             FrameCount = 0;
             Started = 0;
             Vblanks = 0;
+            ChargeTurn = ProbeAt = 0;
             memset(Buttons, 0, sizeof(Buttons));
             memset(Contacts, 0, sizeof(Contacts));
             return;
@@ -112,10 +114,17 @@ void training_contact(unsigned player, int kick) {
     }
 }
 
-static void write_frames(int count, int done) {
+static void write_frames(int count, int done, const char *event) {
     int i, j;
 
-    printf("@training {\"done\":%s,\"frames\":[", done ? "true" : "false");
+    printf("@training {\"done\":%s", done ? "true" : "false");
+    if (event != NULL) {
+        printf(",\"event\":\"%s\",\"tick\":%d", event, Vblanks / TRAINING_SAMPLE_VBLANKS);
+        if (!strcmp(event, "charge")) {
+            printf(",\"charge_angle\":%d", ChargeAngle);
+        }
+    }
+    printf(",\"frames\":[");
     for (i = 0; i < count; i++) {
         const TrainingFrame *f = &Frames[i];
 
@@ -158,6 +167,70 @@ static void write_frames(int count, int done) {
     reply("");
 }
 
+int training_charge_choice(unsigned player, int angle) {
+    char line[128], extra;
+    int choice, horizon;
+
+    if (Teacher != TRAINING_HYBRID || player != 0) {
+        return 0;
+    }
+    ChargeTurn = 0;
+    if (!Started || ProbeAt != 0 || !training_snapshot(&Frames[0], Arena) || !Frames[0].round_active) {
+        return 0;
+    }
+    ChargeAngle = angle;
+    write_frames(1, 0, "charge");
+    while (fgets(line, sizeof(line), stdin) != NULL) {
+        if (sscanf(line, "charge %d %d %c", &choice, &horizon, &extra) == 2 &&
+            choice >= 0 && choice <= 3 && horizon >= 0 && horizon <= 900) {
+            ChargeTurn = choice == 2 ? -0x200 : choice == 3 ? 0x200 : 0;
+            ProbeAt = horizon ? Vblanks + horizon * TRAINING_SAMPLE_VBLANKS : 0;
+            memset(Contacts, 0, sizeof(Contacts));
+            return choice == 1;
+        }
+        reply("@training {\"error\":\"expected a charge choice and horizon\"}");
+    }
+    platform_finish(ferror(stdin) ? 1 : 0);
+    return 0;
+}
+
+int training_charge_turn(unsigned player) {
+    int turn = 0;
+    if (Teacher == TRAINING_HYBRID && player == 0) {
+        turn = ChargeTurn;
+        ChargeTurn = 0;
+    }
+    return turn;
+}
+
+static void hybrid_vblank(void) {
+    const int status = training_polar_status();
+    int done;
+
+    if (!Started) {
+        if (status == 1) {
+            Started = 1;
+        } else if (Vblanks >= 1800) {
+            reply("@training {\"error\":\"Arena did not reach the start of the round\"}");
+            platform_finish(1);
+        }
+        return;
+    }
+    if (status == 1 && (ProbeAt == 0 || Vblanks < ProbeAt)) {
+        return;
+    }
+    done = status != 1;
+    if (!training_snapshot(&Frames[0], Arena)) {
+        reply("@training {\"error\":\"Arena left the round unexpectedly\"}");
+        platform_finish(1);
+    }
+    write_frames(1, done, done ? "end" : "probe");
+    read_command(0);
+    if (PendingMatch) {
+        platform_restart(0);
+    }
+}
+
 int training_vblank(void) {
     TrainingFrame *frame;
     int alive = 0, done, first_polar_frame, i;
@@ -166,6 +239,10 @@ int training_vblank(void) {
         return --FinishVblanks == 0;
     }
     if (!Enabled || PendingMatch || ++Vblanks % TRAINING_SAMPLE_VBLANKS != 0) {
+        return 0;
+    }
+    if (Teacher == TRAINING_HYBRID) {
+        hybrid_vblank();
         return 0;
     }
     frame = &Frames[FrameCount];
@@ -190,7 +267,7 @@ int training_vblank(void) {
     Started = 1;
     done = alive < 2 || !frame->round_active;
     if (++FrameCount == SamplesPerStep || first_polar_frame || done) {
-        write_frames(FrameCount, done);
+        write_frames(FrameCount, done, NULL);
         if (View && done) {
             FinishVblanks = 120;
             memset(Buttons, 0, sizeof(Buttons));

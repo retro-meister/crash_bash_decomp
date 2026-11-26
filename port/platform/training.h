@@ -5,6 +5,7 @@
 
 enum { TRAINING_PLAYERS = 4, TRAINING_BALLS = 5, TRAINING_FRAMES = 3, TRAINING_SAMPLE_VBLANKS = 2 };
 enum { TRAINING_CRASHBALL_MODE = 14, TRAINING_POLAR_PANIC_MODE = 19, TRAINING_TINY = 5 };
+enum { TRAINING_INPUT, TRAINING_TEACHER, TRAINING_HYBRID };
 enum { TRAINING_POLAR_FIELDS = 14, TRAINING_EDGE_RAYS = 8, TRAINING_OBSTACLES = 3 };
 
 typedef struct {
@@ -32,6 +33,9 @@ void training_start(int view, int arena, int teacher, int repeat);
 int training_take_match(TrainingMatch *match);
 int training_pad(int port, int *buttons);
 void training_contact(unsigned player, int kick);
+int training_charge_choice(unsigned player, int angle);
+int training_charge_turn(unsigned player);
+int training_polar_status(void);
 int training_vblank(void);
 int training_snapshot(TrainingFrame *frame, int arena);
 
