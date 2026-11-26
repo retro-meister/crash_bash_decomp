@@ -5,6 +5,7 @@
 #include "bash/arkenoid.h"
 #include "bash/draw.h"
 #include "bash/extraheroes.h"
+#include "../../../platform/training.h"
 
 /* the exe's data the tables point at, not declared in the headers yet */
 
@@ -5457,6 +5458,9 @@ NAS *ArkHero2ObjectCollision(u32 arg0) {
         }
         obj->player = arg0;
         if (hero->hero_mode != 0x21) {
+            if (obj->whatami == 1) {
+                training_contact(arg0, 0);
+            }
             back = 0;
         }
         if (back) {
@@ -5601,6 +5605,7 @@ bool ArkHeroRad2ObjectCollision(u32 arg0, s32 arg1, bool arg2) {
                                     e = FindExtension(n, 0x800);
                                     if (e != NULL) {
                                         hit = 1;
+                                        training_contact(arg0, 1);
                                         PlaySfx(0x585, NULL, NULL, 0x1000, 0x1E00, 0);
                                         t->timer = 4;
                                         e->Xa = ang;

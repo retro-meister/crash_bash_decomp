@@ -27,6 +27,7 @@
 #include "platform/folders.h"
 #include "platform/crashlog.h"
 #include "platform/achievements.h"
+#include "platform/training.h"
 
 int extra_hero_named(const char *id); /* game/main/extraheroes.c: --extra-hero's names */
 void bonus_heroes_dump_to(const char *folder); /* game/main/bonusheroes.c: --dump-hero */
@@ -261,6 +262,7 @@ void platform_vblank(void) {
     int i;
 
     Vblanks++;
+    training_vblank();
     net_vblank();
     for (i = 0; i < NumShots; i++) {
         if (Shots[i].frame == TEST_NOW) {
@@ -425,6 +427,11 @@ static int dump_files(const char *folder) {
 }
 
 int platform_local_pad(int port) {
+    int training_buttons;
+
+    if (training_pad(port, &training_buttons)) {
+        return training_buttons;
+    }
     int b = NoWindow ? (port == 0 ? 0 : -1) : host_pad(port);
     int i;
 
@@ -570,6 +577,7 @@ int main(int argc, char **argv) {
     int fingerprints = 0, game_clock_sound = 0, online, no_sound = 0, restart_on_play = 0, stick_deadzone = -1, prompts = -1, check_crash = 0;
     int prepare = 0;
     NetOptions net = { .joiners = 1, .differ_at = -1, .vanish_at = -1, .stall_at = -1 };
+    int training = 0;
 
 #ifdef SDL_PLATFORM_ANDROID
     /* Android sends a program's output nowhere. A player's goes in a log of its own in logs/ in the app's folder, kept 14 days, as on a
@@ -780,6 +788,8 @@ int main(int argc, char **argv) {
         } else if (strcmp(argv[i], "--press") == 0 && i + 2 < argc && NumPresses < MAX_PRESSES) {
             Presses[NumPresses].frame = when(argv[++i]);
             Presses[NumPresses++].buttons = (int)strtol(argv[++i], NULL, 16);
+        } else if (strcmp(argv[i], "--training") == 0) {
+            training = 1;
         } else if (strcmp(argv[i], "--no-window") == 0) {
             NoWindow = 1;
             testing = 1;
@@ -960,6 +970,13 @@ int main(int argc, char **argv) {
        clock (docs/PORT.md, Online play) */
     online = net.host != NULL || net.join != NULL || net.replay != NULL;
     Replaying = net.replay != NULL;
+    if (training) {
+        if (online || StopAt >= 0 || test_mode >= 0 || test_adventure || test_challenge >= 0 || launcher) {
+            fprintf(stderr, "--training controls the match, clock and controllers\n");
+            return 2;
+        }
+        NoWindow = no_sound = no_launcher = skip_intro = skip_loading = testing = 1;
+    }
     /* RecompLauncher's achievements, when it started the game (docs/PORT.md, Achievements) */
     achievements_start();
     if (online) {
@@ -1096,7 +1113,9 @@ int main(int argc, char **argv) {
         return dump_files(dump_files_to);
     }
     /* before the renderer, which makes room for the textures they have */
-    mods_scan();
+    if (!training) {
+        mods_scan();
+    }
     if (dump_hero != NULL) {
         int x;
 
@@ -1145,6 +1164,9 @@ int main(int argc, char **argv) {
     }
     gfx_draw_every(draw_every);
     overlays_init();
+    if (training) {
+        training_start();
+    }
     /* where platform_restart comes back to: the game from its beginning again */
     setjmp(Restart);
     machine_init();

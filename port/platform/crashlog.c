@@ -705,7 +705,7 @@ void crashlog_install(void) {
     signal(SIGABRT, abort_report);
 }
 
-#else /* POSIX */
+#else
 #include <dlfcn.h>
 #ifdef __APPLE__
 #include <sys/ucontext.h>

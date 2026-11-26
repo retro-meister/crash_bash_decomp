@@ -1,4 +1,5 @@
 #include "../../../platform/settings.h"
+#include "../../../platform/training.h"
 #include "common.h"
 #include "bash/engine.h"
 #include "bash/main.h"
@@ -685,6 +686,28 @@ void TitlesInitLevel(void) {
 
 void TitlesCheckIdle(void) {
     s32 f;
+    TrainingMatch match;
+
+    if (training_take_match(&match)) {
+        GameState *g = GAME;
+        int i;
+
+        SetRandomSeed((s32)match.seed, (s32)(match.seed ^ UINT32_C(0x573CEC9)));
+        g->mode = TRAINING_CRASHBALL_MODE;
+        g->levelFlags = 1;
+        g->demo = 0;
+        g->players = match.players;
+        g->maxPlayers = TRAINING_PLAYERS;
+        g->teams = 0;
+        g->aiLevel = match.difficulty;
+        g->adventure.modeFlags[g->mode] |= 0x10;
+        for (i = 0; i < TRAINING_PLAYERS; i++) {
+            g->heroes[i] = g->heroChoice[i];
+            g->heroCpu[i] = i >= match.players;
+        }
+        ProcessControl.next_process = &LevelLoadProcess;
+        return;
+    }
     if (settings()->test_mode >= 0) {
         GameState *g = GAME;
 

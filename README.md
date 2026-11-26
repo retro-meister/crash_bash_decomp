@@ -4,7 +4,7 @@
 
 Crash Bash (USA, `SCUS_945.70`) for the PlayStation, decompiled to C. It gives you two things:
 
-- **A native port**: a 64-bit game with widescreen, mods, custom heroes and online play. Releases cover Windows, Linux and Android. macOS builds from source.
+- **A native port**: a 64-bit game for Windows, Linux and Android, with widescreen, mods, heroes of your own and online play. Not an emulator.
 - **A matching decomp**: C that rebuilds the retail disc byte for byte.
 
 You need your own copy of the game for either. None of its files are included.
@@ -76,8 +76,6 @@ version each checked by hash (and SDL3, with `-DBASH_FETCH_SDL3=ON`). More in [d
 On Linux it's the same with the `linux-clang` preset, which makes `build/port/linux-clang/crashbash`: it needs Clang, CMake, Ninja,
 zlib's headers and [SDL3's build dependencies](https://github.com/libsdl-org/SDL/blob/main/docs/README-linux.md), and Vulkan to run. Or
 build it in Docker with `tools/dl` ([docs/PORT.md](docs/PORT.md), Linux).
-
-On macOS, use the `macos-clang` preset to build `build/port/macos-clang/crashbash`. It uses Metal and has been tested on Apple silicon. See the [macOS build and launch commands](docs/PORT.md#the-mac).
 
 Android's `.apk` builds in Docker too: `tools/da sh port/android/build.sh` ([docs/PORT.md](docs/PORT.md), Android).
 

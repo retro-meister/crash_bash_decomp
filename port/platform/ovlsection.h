@@ -4,7 +4,7 @@
  *     $ parts by name.
  *   Linux (ELF): ovl_NAME, a name that's a C identifier, so the linker marks its ends with __start_ovl_NAME and __stop_ovl_NAME (ELF
  *     linkers don't sort $ parts: there the marks ended up side by side after everything, around nothing).
- *   The Mac (Mach-O): __DATA,__ovNAME, whose ends its linker gives as section$start$__DATA$__ovNAME and section$end$.... */
+ *   The Mac (Mach-O): __DATA,__ovNAME, whose ends its linker gives as section$start$__DATA$__ovNAME and section$end$... (not yet built). */
 #if defined(__APPLE__)
 #define PORT_BSS __attribute__((section("__DATA,__bss,zerofill")))
 #else
