@@ -19,9 +19,9 @@ WEIGHT_SHAPES = ((34, 68), (68,), (68, 68), (68,), (68, 4), (4,))
 
 
 class Crashball:
-    def __init__(self, exe, data):
+    def __init__(self, exe, data, view=False):
         self.process = subprocess.Popen(
-            [str(exe.resolve()), "--training", "--data", str(data.resolve())],
+            [str(exe.resolve()), "--training-view" if view else "--training", "--data", str(data.resolve())],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, bufsize=1,
         )
         try:
@@ -316,6 +316,27 @@ def check(args):
     print("Seeded reset, pad input, and active ball observations passed")
 
 
+def watch(args):
+    import numpy as np
+
+    weights = load_weights(args.weights, np)
+    rng = random.Random(args.seed)
+    with Crashball(args.exe, args.data, view=True) as env:
+        print(f"Watching {args.weights.name} control Player 1 against three CPU opponents", flush=True)
+        result = env.reset(args.seed, difficulty=args.difficulty)
+        try:
+            while not result["done"]:
+                action = predict(observation(result, 0, rng), weights, np) if score(result)[0] > 0 else 0
+                result = env.step(action)
+        except (BrokenPipeError, RuntimeError):
+            if env.process.wait(timeout=2) == 0:
+                return
+            raise
+        print(f"Final scores by seat: {score(result)}. Close the game window to exit.", flush=True)
+        if env.process.wait() != 0:
+            raise RuntimeError("Crashball exited with an error")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Run Crashball rollouts and evaluate or fine-tune RillAi.")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -325,6 +346,7 @@ def main():
     conversion.set_defaults(run=convert)
     for name, run, help_text in (
         ("check", check, "Verify repeatable resets, controller input, and observations"),
+        ("watch", watch, "Watch a saved policy play one round in a game window"),
         ("evaluate", evaluate, "Benchmark idle, random, and optional checkpoint policies on the same seeds"),
         ("train", train, "Train Double DQN from scratch or fine-tune existing weights"),
     ):
@@ -334,6 +356,8 @@ def main():
         command.add_argument("--seed", type=int, default=1)
         command.add_argument("--difficulty", type=int, choices=range(3), default=2)
         command.set_defaults(run=run)
+        if name == "watch":
+            command.add_argument("--weights", type=Path, required=True)
         if name in ("evaluate", "train"):
             command.add_argument("--weights", type=Path)
             command.add_argument("--max-steps", type=int, default=3000)

@@ -262,7 +262,12 @@ void platform_vblank(void) {
     int i;
 
     Vblanks++;
-    training_vblank();
+    if (training_vblank()) {
+        while (host_poll()) {
+            host_wait_vblank();
+        }
+        platform_finish(0);
+    }
     net_vblank();
     for (i = 0; i < NumShots; i++) {
         if (Shots[i].frame == TEST_NOW) {
@@ -578,6 +583,7 @@ int main(int argc, char **argv) {
     int prepare = 0;
     NetOptions net = { .joiners = 1, .differ_at = -1, .vanish_at = -1, .stall_at = -1 };
     int training = 0;
+    int training_view = 0;
 
 #ifdef SDL_PLATFORM_ANDROID
     /* Android sends a program's output nowhere. A player's goes in a log of its own in logs/ in the app's folder, kept 14 days, as on a
@@ -790,6 +796,8 @@ int main(int argc, char **argv) {
             Presses[NumPresses++].buttons = (int)strtol(argv[++i], NULL, 16);
         } else if (strcmp(argv[i], "--training") == 0) {
             training = 1;
+        } else if (strcmp(argv[i], "--training-view") == 0) {
+            training = training_view = 1;
         } else if (strcmp(argv[i], "--no-window") == 0) {
             NoWindow = 1;
             testing = 1;
@@ -971,11 +979,19 @@ int main(int argc, char **argv) {
     online = net.host != NULL || net.join != NULL || net.replay != NULL;
     Replaying = net.replay != NULL;
     if (training) {
-        if (online || StopAt >= 0 || test_mode >= 0 || test_adventure || test_challenge >= 0 || launcher) {
+        if (online || StopAt >= 0 || test_mode >= 0 || test_adventure || test_challenge >= 0 || launcher || (training_view && NoWindow)) {
             fprintf(stderr, "--training controls the match, clock and controllers\n");
             return 2;
         }
-        NoWindow = no_sound = no_launcher = skip_intro = skip_loading = testing = 1;
+        NoWindow = !training_view;
+        if (training_view) {
+            test_sound = 1;
+            game_clock_sound = 1;
+            fps = 30;
+        } else {
+            no_sound = 1;
+        }
+        no_launcher = skip_intro = skip_loading = testing = 1;
     }
     /* RecompLauncher's achievements, when it started the game (docs/PORT.md, Achievements) */
     achievements_start();
@@ -1135,6 +1151,10 @@ int main(int argc, char **argv) {
         mods_apply_files();
     }
     if (!NoWindow && !host_init()) {
+        if (training_view) {
+            fprintf(stderr, "Could not open the training window\n");
+            return 1;
+        }
         fprintf(stderr, "No window; running without one.\n");
         NoWindow = 1;
     }
@@ -1163,9 +1183,12 @@ int main(int argc, char **argv) {
         }
     }
     gfx_draw_every(draw_every);
+    if (training_view) {
+        host_training_view();
+    }
     overlays_init();
     if (training) {
-        training_start();
+        training_start(training_view);
     }
     /* where platform_restart comes back to: the game from its beginning again */
     setjmp(Restart);

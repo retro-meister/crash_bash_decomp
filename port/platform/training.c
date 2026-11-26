@@ -6,6 +6,7 @@
 #include <string.h>
 
 static int Enabled, PendingMatch;
+static int View, FinishVblanks;
 static int Buttons[TRAINING_PLAYERS];
 static int Contacts[TRAINING_PLAYERS][2];
 static TrainingMatch Match;
@@ -70,8 +71,9 @@ static void read_command(int allow_step) {
     platform_finish(ferror(stdin) ? 1 : 0);
 }
 
-void training_start(void) {
+void training_start(int view) {
     Enabled = 1;
+    View = view;
     reply("@training {\"version\":1,\"mode\":\"Crashball\",\"vblanks_per_step\":6}");
     read_command(0);
 }
@@ -121,13 +123,17 @@ static void write_frames(int count, int done) {
     reply("");
 }
 
-void training_vblank(void) {
-    TrainingFrame *frame = &Frames[FrameCount];
+int training_vblank(void) {
+    TrainingFrame *frame;
     int alive = 0, done, i;
 
-    if (!Enabled || PendingMatch || ++Vblanks % TRAINING_SAMPLE_VBLANKS != 0) {
-        return;
+    if (FinishVblanks != 0) {
+        return --FinishVblanks == 0;
     }
+    if (!Enabled || PendingMatch || ++Vblanks % TRAINING_SAMPLE_VBLANKS != 0) {
+        return 0;
+    }
+    frame = &Frames[FrameCount];
     if (!Started && Vblanks >= 1800) {
         reply("@training {\"error\":\"Crashball did not reach the start of the round\"}");
         platform_finish(1);
@@ -137,21 +143,27 @@ void training_vblank(void) {
             reply("@training {\"error\":\"Crashball left the round unexpectedly\"}");
             platform_finish(1);
         }
-        return;
+        return 0;
     }
     for (i = 0; i < TRAINING_PLAYERS; i++) {
         alive += frame->score[i] > 0;
     }
     if (!Started && (!frame->round_active || alive < 2)) {
-        return;
+        return 0;
     }
     Started = 1;
     done = alive < 2 || !frame->round_active;
     if (++FrameCount == TRAINING_FRAMES || done) {
         write_frames(FrameCount, done);
+        if (View && done) {
+            FinishVblanks = 120;
+            memset(Buttons, 0, sizeof(Buttons));
+            return 0;
+        }
         read_command(!done);
         if (PendingMatch) {
             platform_restart(0);
         }
     }
+    return 0;
 }

@@ -21,11 +21,11 @@ typedef struct {
     int difficulty;
 } TrainingMatch;
 
-void training_start(void);
+void training_start(int view);
 int training_take_match(TrainingMatch *match);
 int training_pad(int port, int *buttons);
 void training_contact(unsigned player, int kick);
-void training_vblank(void);
+int training_vblank(void);
 int training_snapshot(TrainingFrame *frame);
 
 #endif

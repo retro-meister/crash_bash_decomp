@@ -20,6 +20,7 @@ static SDL_Window *Window;
 static SDL_AudioStream *Audio;
 static Uint64 NextVblank;
 static bool Fullscreen;
+static int TrainingSpeed;
 
 /* The controllers, a player's each: slot n is player n + 1's. One that's unplugged leaves its slot empty, so nobody else's player
    changes, and it comes back to it when it's plugged in again; a new one takes the first empty slot, as one plugged into a free port
@@ -44,7 +45,7 @@ static bool PretendKeys[SDL_SCANCODE_COUNT];
 static int EscClosing;
 
 static int esc_closes(void) {
-    return settings()->testing || settings()->test_aim || settings()->test_adventure;
+    return TrainingSpeed || settings()->testing || settings()->test_aim || settings()->test_adventure;
 }
 /* What player 1 last pressed with, for the button prompts (prompts.h): PROMPT_DEVICE_, or -1 for nothing yet. A mouse moved this far, in
    the window's pixels, counts too, but not a nudge */
@@ -166,6 +167,8 @@ static long long QueueWaited;
 void host_audio_queue(const int16_t *frames, int count) {
     float off;
     int waiting;
+    int speed = TrainingSpeed ? TrainingSpeed : 1;
+    int aim = QUEUE_AIM * speed;
 
     if (Audio == NULL) {
         return;
@@ -175,12 +178,12 @@ void host_audio_queue(const int16_t *frames, int count) {
     QueueVblanks++;
     QueueWaited += waiting;
     QueueEmpty += waiting == 0 && QueueVblanks > 1;
-    QueueFull += waiting > QUEUE_MOST;
-    if (waiting > QUEUE_MOST) {
+    QueueFull += waiting > QUEUE_MOST * speed;
+    if (waiting > QUEUE_MOST * speed) {
         return;
     }
-    off = (float)(waiting - QUEUE_AIM) / QUEUE_AIM * QUEUE_BEND;
-    SDL_SetAudioStreamFrequencyRatio(Audio, 1.0f + SDL_clamp(off, -QUEUE_BEND, QUEUE_BEND));
+    off = (float)(waiting - aim) / aim * QUEUE_BEND;
+    SDL_SetAudioStreamFrequencyRatio(Audio, speed * (1.0f + SDL_clamp(off, -QUEUE_BEND, QUEUE_BEND)));
     SDL_PutAudioStreamData(Audio, frames, count * 4);
 }
 
@@ -358,9 +361,36 @@ static void wait_until(Uint64 when) {
     }
 }
 
+static void set_training_speed(int speed) {
+    char title[96];
+
+    TrainingSpeed = speed;
+    NextVblank = SDL_GetPerformanceCounter();
+    gfx_draw_every(speed);
+    if (Audio != NULL) {
+        SDL_ClearAudioStream(Audio);
+        SDL_SetAudioStreamFrequencyRatio(Audio, (float)speed);
+    }
+    SDL_snprintf(title, sizeof(title), "Crashball AI | %dx speed | Tab to change", speed);
+    SDL_SetWindowTitle(Window, title);
+    printf("Crashball watch speed: %dx\n", speed);
+}
+
+void host_training_view(void) {
+    set_training_speed(1);
+}
+
+static int training_key(int key) {
+    if (TrainingSpeed && key == SDL_SCANCODE_TAB) {
+        set_training_speed(TrainingSpeed == 4 ? 1 : TrainingSpeed * 2);
+        return 1;
+    }
+    return 0;
+}
+
 void host_wait_vblank(void) {
     Uint64 freq = SDL_GetPerformanceFrequency();
-    Uint64 step = (Uint64)(freq / VBLANK_HZ);
+    Uint64 step = (Uint64)(freq / (VBLANK_HZ * (TrainingSpeed ? TrainingSpeed : 1)));
     Uint64 now = SDL_GetPerformanceCounter();
     int pictures = settings()->fps > 60 ? settings()->fps / 60 : 1;
     int i;
@@ -862,7 +892,7 @@ int host_poll(void) {
                 settings_apply();
             } else if (e.key.scancode == SDL_SCANCODE_ESCAPE && !e.key.repeat && esc_closes()) {
                 EscClosing = 1;
-            } else if (!e.key.repeat) {
+            } else if (!e.key.repeat && !training_key(e.key.scancode)) {
                 KeyPressed = e.key.scancode;
                 UsingPad = 0;
                 P1Device = PROMPT_DEVICE_KEYS;
@@ -1122,7 +1152,7 @@ void host_pretend_key(int key, int down) {
         if (down && !PretendKeys[key] && key == SDL_SCANCODE_ESCAPE && esc_closes()) {
             EscClosing = 1;
         }
-        if (down && !PretendKeys[key]) {
+        if (down && !PretendKeys[key] && !training_key(key)) {
             KeyPressed = key;
             UsingPad = 0;
             P1Device = PROMPT_DEVICE_KEYS;
