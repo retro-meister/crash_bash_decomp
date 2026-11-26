@@ -1,5 +1,6 @@
 import argparse
 from collections import deque
+from contextlib import ExitStack
 import json
 from pathlib import Path
 import random
@@ -56,18 +57,25 @@ class Crashball:
             diagnostics.append(line.rstrip())
         raise RuntimeError("Crashball stopped before replying\n" + "\n".join(diagnostics))
 
-    def command(self, command):
+    def send(self, command):
         self.process.stdin.write(command + "\n")
         self.process.stdin.flush()
+
+    def command(self, command):
+        self.send(command)
         return self.receive()
 
     def reset(self, seed, players=1, difficulty=2):
         return self.command(f"reset {seed % 2**32} {players} {difficulty}")
 
-    def step(self, *actions):
+    def send_step(self, *actions):
         buttons = [ACTIONS[i][action] for i, action in enumerate(actions)]
         buttons.extend([0] * (4 - len(buttons)))
-        return self.command("step " + " ".join(f"{button:x}" for button in buttons))
+        self.send("step " + " ".join(f"{button:x}" for button in buttons))
+
+    def step(self, *actions):
+        self.send_step(*actions)
+        return self.receive()
 
 
 def observation(result, player, rng):
@@ -117,12 +125,19 @@ def score(result):
     return result["frames"][-1]["score"]
 
 
+def player_states(result, players, rng):
+    return [observation(result, player, rng) if score(result)[player] > 0 else None
+            for player in range(players)]
+
+
 def evaluate(args):
     if args.weights:
         import numpy as np
 
         weights = load_weights(args.weights, np)
     policies = ("idle", "random", "checkpoint") if args.weights else ("idle", "random")
+    if args.policy:
+        policies = (args.policy,)
     started = time.perf_counter()
     with Crashball(args.exe, args.data) as env:
         for policy in policies:
@@ -154,7 +169,35 @@ def evaluate(args):
     print(f"Wall time: {time.perf_counter() - started:.2f}s")
 
 
+class Replay:
+    def __init__(self, capacity, np):
+        self.data = (
+            np.empty((capacity, 34), dtype=np.float32),
+            np.empty(capacity, dtype=np.int32),
+            np.empty(capacity, dtype=np.float32),
+            np.empty((capacity, 34), dtype=np.float32),
+            np.empty(capacity, dtype=np.float32),
+        )
+        self.capacity = capacity
+        self.count = 0
+        self.next_index = 0
+        self.np = np
+
+    def add(self, *values):
+        for array, value in zip(self.data, values, strict=True):
+            array[self.next_index] = value
+        self.next_index = (self.next_index + 1) % self.capacity
+        self.count = min(self.count + 1, self.capacity)
+
+    def sample(self, rng, size):
+        indices = self.np.asarray(rng.sample(range(self.count), size))
+        if self.count == self.capacity:
+            indices = (indices + self.next_index) % self.capacity
+        return tuple(array[indices] for array in self.data)
+
+
 def train(args):
+    started = time.perf_counter()
     import numpy as np
     import tensorflow as tf
 
@@ -181,40 +224,68 @@ def train(args):
             chosen = tf.gather(network(states), actions, batch_dims=1)
             loss = tf.reduce_mean(tf.keras.losses.huber(expected, chosen))
         optimizer.apply_gradients(zip(tape.gradient(loss, network.trainable_weights), network.trainable_weights))
+        return tuple(tf.identity(weight) for weight in network.trainable_weights)
 
-    replay = deque(maxlen=50_000)
-    completed = episode_steps = 0
-    with Crashball(args.exe, args.data) as env:
-        result = env.reset(args.seed, difficulty=args.difficulty)
+    replay = Replay(50_000, np)
+    completed = step = 0
+    checkpoint_steps = set(args.checkpoint_step)
+    exploration_steps = args.exploration_steps or args.steps
+    initial_epsilon = 0.2 if args.weights else 1.0
+    with ExitStack() as stack:
+        count = min(args.workers, args.steps)
+        environments = [stack.enter_context(Crashball(args.exe, args.data)) for _ in range(count)]
+        results = [env.reset(args.seed if index == 0 else rng.getrandbits(32), args.players, args.difficulty)
+                   for index, env in enumerate(environments)]
+        states = [player_states(result, args.players, rng) for result in results]
+        episode_steps = [0] * count
         weights = network.get_weights()
-        state = observation(result, 0, rng)
-        for step in range(1, args.steps + 1):
-            epsilon = max(0.05, (0.2 if args.weights else 1.0) * (1 - step / args.steps))
-            action = rng.randrange(4) if rng.random() < epsilon else predict(state, weights, np)
-            previous_score = score(result)[0]
-            result = env.step(action)
-            episode_steps += 1
-            current_score = score(result)[0]
-            done = current_score == 0 or result["done"]
-            next_state = state if done else observation(result, 0, rng)
-            reward = result["touches"][0] + result["kicks"][0] + current_score - previous_score
-            replay.append((state, action, reward, next_state, done))
-            state = next_state
-            if len(replay) >= 256 and step % 4 == 0:
-                states, actions, rewards, next_states, dones = zip(*rng.sample(replay, 64))
-                update(np.asarray(states, np.float32), np.asarray(actions, np.int32), np.asarray(rewards, np.float32),
-                       np.asarray(next_states, np.float32), np.asarray(dones, np.float32))
-                weights = network.get_weights()
-            if step % 1000 == 0:
-                target.set_weights(weights)
-            if done or episode_steps == args.max_steps:
-                completed += done
-                episode_steps = 0
-                if step < args.steps:
-                    result = env.reset(rng.getrandbits(32), difficulty=args.difficulty)
-                    state = observation(result, 0, rng)
-    np.savez(args.output, *network.get_weights())
+        while step < args.steps:
+            active = environments[:min(count, args.steps - step)]
+            actions = []
+            for index, env in enumerate(active):
+                epsilon = max(0.05, initial_epsilon * (1 - (step + index + 1) / exploration_steps))
+                decisions = []
+                for state in states[index]:
+                    if state is None:
+                        decisions.append(0)
+                    elif rng.random() < epsilon:
+                        decisions.append(rng.randrange(4))
+                    else:
+                        decisions.append(predict(state, weights, np))
+                env.send_step(*decisions)
+                actions.append(decisions)
+            for index, (env, decisions) in enumerate(zip(active, actions, strict=True)):
+                step += 1
+                episode_steps[index] += 1
+                previous_scores = score(results[index])
+                result = env.receive()
+                scores = score(result)
+                done = result["done"] or not any(value > 0 for value in scores[:args.players])
+                following = [None] * args.players if done else player_states(result, args.players, rng)
+                for player, (state, action, next_state) in enumerate(zip(states[index], decisions, following, strict=True)):
+                    if state is not None:
+                        reward = result["touches"][player] + result["kicks"][player] + scores[player] - previous_scores[player]
+                        replay.add(state, action, reward, state if next_state is None else next_state, next_state is None)
+                if replay.count >= 256 and step % 4 == 0:
+                    weights = [weight.numpy() for weight in update(*replay.sample(rng, 64))]
+                if step % 1000 == 0:
+                    target.set_weights(weights)
+                if step in checkpoint_steps:
+                    checkpoint = args.output.with_name(f"{args.output.stem}-{step}.npz")
+                    np.savez(checkpoint, *weights)
+                    print(f"Checkpoint at {step} steps after {time.perf_counter() - started:.2f}s: {checkpoint}", flush=True)
+                if done or episode_steps[index] == args.max_steps:
+                    completed += done
+                    episode_steps[index] = 0
+                    if step < args.steps:
+                        result = env.reset(rng.getrandbits(32), args.players, args.difficulty)
+                        following = player_states(result, args.players, rng)
+                results[index] = result
+                states[index] = following
+    np.savez(args.output, *weights)
     print(f"Saved {args.steps} steps and {completed} completed episodes to {args.output}")
+    elapsed = time.perf_counter() - started
+    print(f"{elapsed:.2f} seconds, {args.steps / elapsed:.0f} training steps/s with {count} simulator workers")
 
 
 def check(args):
@@ -256,15 +327,26 @@ def main():
             command.add_argument("--max-steps", type=int, default=3000)
         if name == "evaluate":
             command.add_argument("--episodes", type=int, default=10)
+            command.add_argument("--policy", choices=("idle", "random", "checkpoint"), help="Evaluate only this policy")
         if name == "train":
             command.add_argument("--steps", type=int, default=20_000)
+            command.add_argument("--workers", type=int, default=1, help="Number of concurrent native simulators")
+            command.add_argument("--players", type=int, choices=range(1, 5), default=1, help="Seats controlled by the learning policy in each arena")
+            command.add_argument("--checkpoint-step", action="append", type=int, default=[], help="Save an intermediate checkpoint at this step count (repeatable)")
+            command.add_argument("--exploration-steps", type=int, help="Steps over which to reduce exploration (default: training budget)")
             command.add_argument("--output", required=True, type=Path)
     args = parser.parse_args()
     if args.command != "convert" and not 0 <= args.seed < 2**32:
         parser.error("--seed must be an unsigned 32-bit integer")
-    for flag in ("episodes", "max_steps", "steps"):
+    for flag in ("episodes", "max_steps", "steps", "workers"):
         if hasattr(args, flag) and getattr(args, flag) <= 0:
             parser.error(f"--{flag.replace('_', '-')} must be positive")
+    if args.command == "evaluate" and args.policy == "checkpoint" and args.weights is None:
+        parser.error("--policy checkpoint requires --weights")
+    if args.command == "train" and any(not 1 <= step < args.steps for step in args.checkpoint_step):
+        parser.error("--checkpoint-step must be between 1 and --steps minus 1")
+    if args.command == "train" and args.exploration_steps is not None and args.exploration_steps < 1:
+        parser.error("--exploration-steps must be positive")
     args.run(args)
 
 
