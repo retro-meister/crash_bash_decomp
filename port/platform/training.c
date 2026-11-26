@@ -6,7 +6,7 @@
 #include <string.h>
 
 static int Enabled, PendingMatch;
-static int View, FinishVblanks;
+static int View, Arena, Teacher, FinishVblanks;
 static int Buttons[TRAINING_PLAYERS];
 static int Contacts[TRAINING_PLAYERS][2];
 static TrainingMatch Match;
@@ -25,7 +25,7 @@ static void read_command(int allow_step) {
         TrainingMatch next;
         unsigned int buttons[TRAINING_PLAYERS];
         char extra;
-        int i;
+        int i, fields;
 
         if (strchr(line, '\n') == NULL && !feof(stdin)) {
             int c;
@@ -37,8 +37,13 @@ static void read_command(int allow_step) {
         if (strcmp(line, "quit\n") == 0 || strcmp(line, "quit\r\n") == 0 || strcmp(line, "quit") == 0) {
             platform_finish(0);
         }
-        if (sscanf(line, "reset %" SCNu32 " %d %d %c", &next.seed, &next.players, &next.difficulty, &extra) == 3 &&
-            next.players >= 1 && next.players <= TRAINING_PLAYERS && next.difficulty >= 0 && next.difficulty <= 2) {
+        next.hero = 0;
+        next.arena = Arena;
+        next.teacher = Teacher;
+        fields = sscanf(line, "reset %" SCNu32 " %d %d %d %c", &next.seed, &next.players, &next.difficulty, &next.hero, &extra);
+        if ((fields == 4 || (fields == 3 && sscanf(line, "reset %*u %*d %*d %c", &extra) == EOF)) &&
+            next.players >= 1 && next.players <= TRAINING_PLAYERS && next.difficulty >= 0 && next.difficulty <= 2 &&
+            (next.hero == 0 || next.hero == TRAINING_TINY)) {
             Match = next;
             PendingMatch = 1;
             FrameCount = 0;
@@ -71,10 +76,14 @@ static void read_command(int allow_step) {
     platform_finish(ferror(stdin) ? 1 : 0);
 }
 
-void training_start(int view) {
+void training_start(int view, int arena, int teacher) {
     Enabled = 1;
     View = view;
-    reply("@training {\"version\":1,\"mode\":\"Crashball\",\"vblanks_per_step\":6}");
+    Arena = arena;
+    Teacher = teacher;
+    reply(arena == TRAINING_POLAR_PANIC_MODE
+        ? "@training {\"version\":1,\"mode\":\"Polar Panic\",\"vblanks_per_step\":2}"
+        : "@training {\"version\":1,\"mode\":\"Crashball\",\"vblanks_per_step\":6}");
     read_command(0);
 }
 
@@ -108,6 +117,18 @@ static void write_frames(int count, int done) {
     for (i = 0; i < count; i++) {
         const TrainingFrame *f = &Frames[i];
 
+        if (Arena == TRAINING_POLAR_PANIC_MODE) {
+            printf("%s{\"score\":[%d,%d,%d,%d],\"ice_radius\":%d,\"clock\":%d,\"winner\":%d,\"polar\":[",
+                   i == 0 ? "" : ",", f->score[0], f->score[1], f->score[2], f->score[3],
+                   f->ice_radius, f->clock, f->winner);
+            for (j = 0; j < TRAINING_PLAYERS; j++) {
+                const int *p = f->polar[j];
+                printf("%s[%d,%d,%d,%d,%d,%d,%d,%d,%d,%d]", j == 0 ? "" : ",",
+                       p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7], p[8], p[9]);
+            }
+            printf("]}");
+            continue;
+        }
         printf("%s{\"position\":[%d,%d,%d,%d],\"score\":[%d,%d,%d,%d],\"kick_ready\":[%d,%d,%d,%d],\"balls\":[",
                i == 0 ? "" : ",", f->position[0], f->position[1], f->position[2], f->position[3],
                f->score[0], f->score[1], f->score[2], f->score[3],
@@ -135,12 +156,12 @@ int training_vblank(void) {
     }
     frame = &Frames[FrameCount];
     if (!Started && Vblanks >= 1800) {
-        reply("@training {\"error\":\"Crashball did not reach the start of the round\"}");
+        reply("@training {\"error\":\"Arena did not reach the start of the round\"}");
         platform_finish(1);
     }
-    if (!training_snapshot(frame)) {
+    if (!training_snapshot(frame, Arena)) {
         if (Started) {
-            reply("@training {\"error\":\"Crashball left the round unexpectedly\"}");
+            reply("@training {\"error\":\"Arena left the round unexpectedly\"}");
             platform_finish(1);
         }
         return 0;
@@ -153,7 +174,7 @@ int training_vblank(void) {
     }
     Started = 1;
     done = alive < 2 || !frame->round_active;
-    if (++FrameCount == TRAINING_FRAMES || done) {
+    if (++FrameCount == (Arena == TRAINING_POLAR_PANIC_MODE ? 1 : TRAINING_FRAMES) || done) {
         write_frames(FrameCount, done);
         if (View && done) {
             FinishVblanks = 120;

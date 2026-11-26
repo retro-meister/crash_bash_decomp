@@ -584,6 +584,8 @@ int main(int argc, char **argv) {
     NetOptions net = { .joiners = 1, .differ_at = -1, .vanish_at = -1, .stall_at = -1 };
     int training = 0;
     int training_view = 0;
+    int training_arena = TRAINING_CRASHBALL_MODE;
+    int training_teacher = 0;
 
 #ifdef SDL_PLATFORM_ANDROID
     /* Android sends a program's output nowhere. A player's goes in a log of its own in logs/ in the app's folder, kept 14 days, as on a
@@ -798,6 +800,10 @@ int main(int argc, char **argv) {
             training = 1;
         } else if (strcmp(argv[i], "--training-view") == 0) {
             training = training_view = 1;
+        } else if (strcmp(argv[i], "--training-polar") == 0) {
+            training_arena = TRAINING_POLAR_PANIC_MODE;
+        } else if (strcmp(argv[i], "--training-teacher") == 0) {
+            training_teacher = 1;
         } else if (strcmp(argv[i], "--no-window") == 0) {
             NoWindow = 1;
             testing = 1;
@@ -1184,11 +1190,11 @@ int main(int argc, char **argv) {
     }
     gfx_draw_every(draw_every);
     if (training_view) {
-        host_training_view();
+        host_training_view(training_arena == TRAINING_POLAR_PANIC_MODE ? "Polar Panic" : "Crashball");
     }
     overlays_init();
     if (training) {
-        training_start(training_view);
+        training_start(training_view, training_arena, training_teacher);
     }
     /* where platform_restart comes back to: the game from its beginning again */
     setjmp(Restart);

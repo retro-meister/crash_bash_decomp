@@ -693,7 +693,7 @@ void TitlesCheckIdle(void) {
         int i;
 
         SetRandomSeed((s32)match.seed, (s32)(match.seed ^ UINT32_C(0x573CEC9)));
-        g->mode = TRAINING_CRASHBALL_MODE;
+        g->mode = match.arena;
         g->levelFlags = 1;
         g->demo = 0;
         g->players = match.players;
@@ -701,9 +701,21 @@ void TitlesCheckIdle(void) {
         g->teams = 0;
         g->aiLevel = match.difficulty;
         g->adventure.modeFlags[g->mode] |= 0x10;
+        if (match.hero == TRAINING_TINY) {
+            for (i = 1; i < TRAINING_PLAYERS; i++) {
+                if (g->heroChoice[i] == TRAINING_TINY) {
+                    g->heroChoice[i] = g->heroChoice[0];
+                    break;
+                }
+            }
+            g->heroChoice[0] = TRAINING_TINY;
+        }
         for (i = 0; i < TRAINING_PLAYERS; i++) {
+            if (match.hero == TRAINING_TINY && i < match.players) {
+                g->heroChoice[i] = TRAINING_TINY;
+            }
             g->heroes[i] = g->heroChoice[i];
-            g->heroCpu[i] = i >= match.players;
+            g->heroCpu[i] = i >= match.players || (i == 0 && match.teacher);
         }
         ProcessControl.next_process = &LevelLoadProcess;
         return;

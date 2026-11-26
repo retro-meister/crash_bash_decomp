@@ -79,7 +79,7 @@ void platform_finish(int code);
 /* The window, opened once and used by the game. Returns NULL if there's none. */
 void *host_window(void);
 int host_init(void);
-void host_training_view(void);
+void host_training_view(const char *arena);
 void host_present(const uint32_t *pixels, int w, int h);
 void host_wait_vblank(void);
 int host_poll(void); /* 0: the window was closed */

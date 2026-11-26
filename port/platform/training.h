@@ -4,7 +4,7 @@
 #include <stdint.h>
 
 enum { TRAINING_PLAYERS = 4, TRAINING_BALLS = 5, TRAINING_FRAMES = 3, TRAINING_SAMPLE_VBLANKS = 2 };
-enum { TRAINING_CRASHBALL_MODE = 14 };
+enum { TRAINING_CRASHBALL_MODE = 14, TRAINING_POLAR_PANIC_MODE = 19, TRAINING_TINY = 5 };
 
 typedef struct {
     int position[TRAINING_PLAYERS];
@@ -13,19 +13,22 @@ typedef struct {
     int balls[TRAINING_BALLS][2];
     int ball_count;
     int round_active;
+    int polar[TRAINING_PLAYERS][10];
+    int ice_radius, clock, winner;
 } TrainingFrame;
 
 typedef struct {
     uint32_t seed;
     int players;
     int difficulty;
+    int arena, hero, teacher;
 } TrainingMatch;
 
-void training_start(int view);
+void training_start(int view, int arena, int teacher);
 int training_take_match(TrainingMatch *match);
 int training_pad(int port, int *buttons);
 void training_contact(unsigned player, int kick);
 int training_vblank(void);
-int training_snapshot(TrainingFrame *frame);
+int training_snapshot(TrainingFrame *frame, int arena);
 
 #endif

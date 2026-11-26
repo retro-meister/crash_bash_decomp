@@ -21,6 +21,7 @@ static SDL_AudioStream *Audio;
 static Uint64 NextVblank;
 static bool Fullscreen;
 static int TrainingSpeed;
+static const char *TrainingArena;
 
 /* The controllers, a player's each: slot n is player n + 1's. One that's unplugged leaves its slot empty, so nobody else's player
    changes, and it comes back to it when it's plugged in again; a new one takes the first empty slot, as one plugged into a free port
@@ -371,12 +372,13 @@ static void set_training_speed(int speed) {
         SDL_ClearAudioStream(Audio);
         SDL_SetAudioStreamFrequencyRatio(Audio, (float)speed);
     }
-    SDL_snprintf(title, sizeof(title), "Crashball AI | %dx speed | Tab to change", speed);
+    SDL_snprintf(title, sizeof(title), "%s AI | %dx speed | Tab to change", TrainingArena, speed);
     SDL_SetWindowTitle(Window, title);
-    printf("Crashball watch speed: %dx\n", speed);
+    printf("%s watch speed: %dx\n", TrainingArena, speed);
 }
 
-void host_training_view(void) {
+void host_training_view(const char *arena) {
+    TrainingArena = arena;
     set_training_speed(1);
 }
 
