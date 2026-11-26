@@ -3893,6 +3893,6 @@ s16 AtanTable[2050] = {
  * $gp here and clears what follows up to HeapStart, the .bss. */
 
 /* the .bss, in link order: written into the file as zeros, as the original link did */
-s32 StartupRa __attribute__((section(".bss")));   /* where the startup code saves $ra */
-u8 *LoadPermanentBuf __attribute__((section(".bss")));
-u8 *LoadWaitBuf __attribute__((section(".bss")));
+s32 StartupRa PORT_BSS;   /* where the startup code saves $ra */
+u8 *LoadPermanentBuf PORT_BSS;
+u8 *LoadWaitBuf PORT_BSS;

@@ -705,14 +705,20 @@ void crashlog_install(void) {
     signal(SIGABRT, abort_report);
 }
 
-#else /* Linux and Android */
+#else /* POSIX */
 #include <dlfcn.h>
+#ifdef __APPLE__
+#include <sys/ucontext.h>
+#else
+#include <ucontext.h>
+#endif
+#include <unwind.h>
+
+#ifndef __APPLE__
 #include <elf.h>
 #include <fcntl.h>
 #include <link.h>
 #include <sys/mman.h>
-#include <ucontext.h>
-#include <unwind.h>
 
 /* The program's own symbol table, from its file (Linux's /proc/self/exe, or the library Android loaded, when it can be read) */
 static const ElfW(Sym) *Syms;
@@ -792,11 +798,12 @@ static const char *own_symbol(uintptr_t addr, uintptr_t *offset) {
     *offset = addr - (SymsBase + best->st_value);
     return Strings + best->st_name;
 }
+#endif
 
 static void describe(uintptr_t addr, char *out, int size) {
     Dl_info info;
     uintptr_t offset = 0;
-    const char *sym, *file;
+    const char *sym = NULL, *file;
 
     if (addr < 0x10000) {
         SDL_snprintf(out, size, "near address 0: a null pointer");
@@ -807,8 +814,10 @@ static void describe(uintptr_t addr, char *out, int size) {
         return;
     }
     file = strrchr(info.dli_fname, '/') != NULL ? strrchr(info.dli_fname, '/') + 1 : info.dli_fname;
+#ifndef __APPLE__
     load_symbols();
     sym = (uintptr_t)info.dli_fbase == OwnBase ? own_symbol(addr, &offset) : NULL;
+#endif
     if (sym == NULL && info.dli_sname != NULL) {
         sym = info.dli_sname;
         offset = addr - (uintptr_t)info.dli_saddr;
@@ -896,7 +905,11 @@ static void crash_signal(int sig, siginfo_t *si, void *uc_) {
     Dl_info info;
 
     fflush(stdout);
-#if defined(__x86_64__)
+#if defined(__APPLE__) && defined(__aarch64__)
+    pc = (uintptr_t)__darwin_arm_thread_state64_get_pc(uc->uc_mcontext->__ss);
+#elif defined(__APPLE__) && defined(__x86_64__)
+    pc = (uintptr_t)uc->uc_mcontext->__ss.__rip;
+#elif defined(__x86_64__)
     pc = (uintptr_t)uc->uc_mcontext.gregs[REG_RIP];
     if (sig == SIGSEGV || sig == SIGBUS) {
         how = (uc->uc_mcontext.gregs[REG_ERR] & 16) ? "running" : (uc->uc_mcontext.gregs[REG_ERR] & 2) ? "writing" : "reading";
@@ -919,7 +932,7 @@ static void crash_signal(int sig, siginfo_t *si, void *uc_) {
         printf("crash: %s %llX, which is %s\n", how, (unsigned long long)(uintptr_t)si->si_addr, what);
     }
     print_stack(sig == SIGABRT ? 0 : pc);
-#if defined(__x86_64__)
+#if defined(__x86_64__) && !defined(__APPLE__)
     {
         greg_t *g = uc->uc_mcontext.gregs;
 

@@ -812,7 +812,7 @@ int gfx_init(void *window, const GfxConfig *config) {
     AtlasXfer = SDL_CreateGPUTransferBuffer(Device, &tc);
     if (!Target || !Base || !Depth || !Atlas || !Sampler || !SamplerSmooth || !VertexBuf || !VertexXfer || !AtlasXfer || !ShotXfer) {
         fprintf(stderr, "GPU resources: %s\n", SDL_GetError());
-        return 0;
+        return init_failed();
     }
     Stepping = config->fps > 30;
     PictureRate = config->fps;
@@ -904,7 +904,7 @@ void gfx_begin_frame(void) {
 void gfx_tri(int key, const GfxVert v[3], const GfxTex *tex, int blend) {
     Tri *t;
 
-    if (NumTris >= MAX_TRIS) {
+    if (Device == NULL || NumTris >= MAX_TRIS) {
         return;
     }
     t = &Tris[NumTris++];
@@ -1131,6 +1131,9 @@ static const GfxTex *texture_scaled(uint64_t id, const void *pixels, int w, int 
     size_t bytes;
     IdSlot *slot = &IdCache[(id * 0x9E3779B97F4A7C15ULL) >> 48];
 
+    if (Device == NULL) {
+        return NULL;
+    }
     if (id != 0 && slot->gen == IdGen && slot->id == id) {
         return &Textures[slot->index].t;
     }
@@ -2044,6 +2047,9 @@ void gfx_draw_every(int frames) {
 void gfx_end_frame(void) {
     Tri *swap = Tris;
 
+    if (Device == NULL) {
+        return;
+    }
     if (Stepping) {
         find_movement();
         /* as many steps as this frame took to come round */
@@ -2093,7 +2099,7 @@ static int picture_fits(void) {
 }
 
 void gfx_present(void) {
-    if (Stepping) {
+    if (Device != NULL && Stepping) {
         StepsDone++;
         if (picture_fits()) {
             draw_shown(StepsDone >= StepsPerFrame ? 1.0f : (float)StepsDone / StepsPerFrame);

@@ -3151,5 +3151,5 @@ s32 SoundStarted = 0;
 s32 SoundUnused[6] = {0};
 
 /* the .bss (main.c's comes first) */
-u8 *NasHeapMem __attribute__((section(".bss")));
-u32 NasHeapBytes __attribute__((section(".bss")));
+u8 *NasHeapMem PORT_BSS;
+u32 NasHeapBytes PORT_BSS;

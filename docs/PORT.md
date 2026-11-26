@@ -121,7 +121,7 @@ cmake --build --preset windows-clang
 ctest --preset windows-clang
 ```
 
-The presets are `windows-clang`, `linux-clang`, `linux-gcc` and `linux-asan`, and the output is under `build/port/`.
+The presets include `windows-clang`, `linux-clang`, `linux-gcc`, `linux-asan` and `macos-clang`. Build output goes under `build/port/`.
 `port/` holds `game/` (the copy of the game's C), `platform/` (the host: window, renderer, sound, maths, files), `tests/` (the play tests) and `main.c`.
 
 The game's C isn't in the default build until it compiles. To see what's left:
@@ -151,17 +151,19 @@ here and there from Direct3D's, so `same` keeps a baseline per system.
 
 ### The Mac
 
-Not built, and off the roadmap: that needs a Mac, as Apple's SDK is licensed for Apple's own computers only, and the user has none
-(2026-11-10). The code stays ready for it as far as it can be from here: the renderer runs on Metal there (`gfx.c`, `GPU_DRIVER`), with the MSL that SPIRV-Cross makes from the Vulkan shaders
-(`make.sh`, so all three systems draw with one shader source; the Linux build compiles the Metal path too, but can't run it), and the
-`macos-clang` preset. On a Mac with Xcode's command-line tools, CMake and Ninja (SDL3 from Homebrew, or fetched):
+The native build uses Metal. Its shaders are generated from the same GLSL as the Vulkan build. On a Mac with Xcode's command-line tools, CMake, Ninja and SDL3, run from the repository root:
 
 ```sh
-cd port && cmake --preset macos-clang -DBASH_FETCH_SDL3=ON && cmake --build --preset macos-clang
+cd port
+cmake --preset macos-clang
+cmake --build --preset macos-clang
+ctest --test-dir ../build/port/macos-clang --output-on-failure
+../build/port/macos-clang/crashbash --image "/path/to/Crash Bash (USA).cue"
 ```
 
-What's left for it: building and playing it there, then a release (one program for Apple silicon and Intel, signed if it's to open
-without macOS's warning) and the README's Mac parts in `package.mjs`.
+Install SDL3 with `brew install sdl3` or add `-DBASH_FETCH_SDL3=ON` when configuring. `--image` imports the game data for future launches. If you already have `CRASHBSH.DAT`, launch with `--data /path/to/CRASHBSH.DAT`.
+
+The Apple silicon build has been smoke-tested in a Metal window and in headless mode. For a headless Crashball demo, run the executable with `--no-window --skip-intro --skip-loading --mode 14 --frames 60000` and your `--data` path.
 
 ### Android
 

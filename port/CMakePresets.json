@@ -53,7 +53,7 @@
     },
     {
       "name": "macos-clang",
-      "displayName": "macOS, Apple's Clang (not yet built: docs/PORT.md, The Mac)",
+      "displayName": "macOS, Apple Clang",
       "inherits": "base",
       "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Darwin" }
     },
