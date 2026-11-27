@@ -13,7 +13,7 @@ static int Contacts[TRAINING_PLAYERS][2];
 static TrainingMatch Match;
 static TrainingFrame Frames[TRAINING_FRAMES];
 static int FrameCount, Started, Vblanks;
-static int ChargeTurn, ChargeAngle, ProbeAt;
+static int ChargeTurn, ChargeAngle, ChargeStarts, ProbeAt;
 
 static void reply(const char *message) {
     puts(message);
@@ -51,7 +51,7 @@ static void read_command(int allow_step) {
             FrameCount = 0;
             Started = 0;
             Vblanks = 0;
-            ChargeTurn = ProbeAt = 0;
+            ChargeTurn = ChargeStarts = ProbeAt = 0;
             memset(Buttons, 0, sizeof(Buttons));
             memset(Contacts, 0, sizeof(Contacts));
             return;
@@ -114,12 +114,21 @@ void training_contact(unsigned player, int kick) {
     }
 }
 
+void training_charge_started(unsigned player) {
+    if (Teacher == TRAINING_PLANNER && player == 0 && Started) {
+        ChargeStarts++;
+    }
+}
+
 static void write_frames(int count, int done, const char *event) {
     int i, j;
 
     printf("@training {\"done\":%s", done ? "true" : "false");
     if (event != NULL) {
         printf(",\"event\":\"%s\",\"tick\":%d", event, Vblanks / TRAINING_SAMPLE_VBLANKS);
+        if (Teacher == TRAINING_PLANNER) {
+            printf(",\"charges\":%d", ChargeStarts);
+        }
         if (!strcmp(event, "charge")) {
             printf(",\"charge_angle\":%d", ChargeAngle);
         }
@@ -203,13 +212,16 @@ int training_charge_turn(unsigned player) {
     return turn;
 }
 
-static void hybrid_vblank(void) {
+static void native_policy_vblank(void) {
     const int status = training_polar_status();
     int done;
 
     if (!Started) {
         if (status == 1) {
             Started = 1;
+            if (Teacher == TRAINING_PLANNER) {
+                Buttons[0] = training_polar_plan(0);
+            }
         } else if (Vblanks >= 1800) {
             reply("@training {\"error\":\"Arena did not reach the start of the round\"}");
             platform_finish(1);
@@ -217,6 +229,9 @@ static void hybrid_vblank(void) {
         return;
     }
     if (status == 1 && (ProbeAt == 0 || Vblanks < ProbeAt)) {
+        if (Teacher == TRAINING_PLANNER && Vblanks % (3 * TRAINING_SAMPLE_VBLANKS) == 0) {
+            Buttons[0] = training_polar_plan(Buttons[0]);
+        }
         return;
     }
     done = status != 1;
@@ -241,8 +256,8 @@ int training_vblank(void) {
     if (!Enabled || PendingMatch || ++Vblanks % TRAINING_SAMPLE_VBLANKS != 0) {
         return 0;
     }
-    if (Teacher == TRAINING_HYBRID) {
-        hybrid_vblank();
+    if (Teacher == TRAINING_HYBRID || Teacher == TRAINING_PLANNER) {
+        native_policy_vblank();
         return 0;
     }
     frame = &Frames[FrameCount];

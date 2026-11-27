@@ -807,6 +807,8 @@ int main(int argc, char **argv) {
             training_teacher = TRAINING_TEACHER;
         } else if (strcmp(argv[i], "--training-polar-hybrid") == 0) {
             training_teacher = TRAINING_HYBRID;
+        } else if (strcmp(argv[i], "--training-polar-planner") == 0) {
+            training_teacher = TRAINING_PLANNER;
         } else if (strcmp(argv[i], "--training-polar-repeat") == 0) {
             if (++i == argc || strlen(argv[i]) != 1 || argv[i][0] < '1' || argv[i][0] > '3') {
                 fprintf(stderr, "--training-polar-repeat requires 1, 2 or 3\n");
@@ -993,9 +995,9 @@ int main(int argc, char **argv) {
        clock (docs/PORT.md, Online play) */
     online = net.host != NULL || net.join != NULL || net.replay != NULL;
     Replaying = net.replay != NULL;
-    if (training_teacher == TRAINING_HYBRID &&
+    if ((training_teacher == TRAINING_HYBRID || training_teacher == TRAINING_PLANNER) &&
         (!training || training_arena != TRAINING_POLAR_PANIC_MODE || training_view || training_repeat != 1)) {
-        fprintf(stderr, "--training-polar-hybrid requires headless Polar Panic training with single-tick controls\n");
+        fprintf(stderr, "Native policies require headless Polar Panic training with single-tick controls\n");
         return 2;
     }
     if (training) {

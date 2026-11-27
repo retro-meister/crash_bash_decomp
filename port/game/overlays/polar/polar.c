@@ -12218,6 +12218,7 @@ s32 PolarTestAttack(s32 player) {
                     training_charge_choice(player, (pad->angle.lo + 0x800) & 0xFFF)) {
                     return 0;
                 }
+                training_charge_started(player);
                 SetHeroAction(player, 0x51);
             }
             return 1;

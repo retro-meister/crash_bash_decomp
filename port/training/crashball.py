@@ -1,5 +1,6 @@
 import argparse
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
 import json
 import math
@@ -26,7 +27,7 @@ POLAR_WEIGHTS = ((42, 96), (96,), (96, 96), (96,), (96, len(POLAR_ACTIONS)), (le
 
 
 class Crashball:
-    def __init__(self, exe, data, view=False, arena="crashball", hero=0, teacher=False, repeat=1, hybrid=False):
+    def __init__(self, exe, data, view=False, arena="crashball", hero=0, teacher=False, repeat=1, hybrid=False, planner=False):
         self.arena = arena
         self.hero = hero
         command = [str(exe.resolve()), "--training-view" if view else "--training", "--data", str(data.resolve())]
@@ -34,7 +35,9 @@ class Crashball:
             command.append("--training-polar")
             if repeat > 1:
                 command.extend(("--training-polar-repeat", str(repeat)))
-        if hybrid:
+        if planner:
+            command.append("--training-polar-planner")
+        elif hybrid:
             command.append("--training-polar-hybrid")
         elif teacher:
             command.append("--training-teacher")
@@ -244,7 +247,45 @@ def measure(args, environments, seeds, choose_action):
     return wins, losses, truncated, steps, points, opponents
 
 
+def measure_native(args, workers, choose):
+    def run(env, seeds):
+        rows = []
+        for seed in seeds:
+            packet = env.reset(seed, difficulty=getattr(args, "difficulty", 2))
+            charges = overrides = 0
+            while packet["event"] == "charge":
+                action = choose(packet)
+                charges += 1
+                overrides += action != 0
+                packet = env.command(f"charge {action} 0")
+            if packet["event"] != "end":
+                raise RuntimeError(f"Unexpected benchmark packet {packet['event']}")
+            victory = winner(packet) if score(packet)[0] else -2
+            charges += packet.get("charges", 0)
+            rows.append((seed, victory, packet["tick"], charges, overrides))
+        return rows
+
+    started = time.perf_counter()
+    with ThreadPoolExecutor(max_workers=len(workers)) as pool:
+        jobs = [pool.submit(run, env, range(args.seed + i, args.seed + args.episodes, len(workers)))
+                for i, env in enumerate(workers)]
+        rows = sorted(row for job in jobs for row in job.result())
+    _, outcomes, ticks, charges, overrides = zip(*rows)
+    elapsed = time.perf_counter() - started
+    wins, draws = outcomes.count(0), outcomes.count(-1)
+    return dict(episodes=args.episodes, wins=wins, losses=args.episodes - wins - draws, draws=draws,
+                charges=sum(charges), overrides=sum(overrides), ticks=sum(ticks),
+                seconds=round(elapsed, 3)), outcomes
+
+
 def evaluate(args):
+    if args.policy == "planner":
+        with ExitStack() as stack:
+            workers = [stack.enter_context(Crashball(args.exe, args.data, arena=args.arena, hero=args.hero, planner=True))
+                       for _ in range(min(args.workers, args.episodes))]
+            result, _ = measure_native(args, workers, lambda packet: 0)
+        print(json.dumps(dict(arena=args.arena, hero=args.hero, policy=args.policy, difficulty=args.difficulty, **result)))
+        return
     action_count = len(POLAR_ACTIONS) if args.arena == "polar-panic" else WEIGHT_SHAPES[-1][0]
     policies = {"idle": lambda result, rng: 0, "random": lambda result, rng: rng.randrange(action_count)}
     if args.weights:
@@ -506,7 +547,7 @@ def main():
     for name, run, help_text in (
         ("check", check, "Verify repeatable resets, controller input, and observations"),
         ("watch", watch, "Watch a saved policy play one round in a game window"),
-        ("evaluate", evaluate, "Benchmark idle, random, and optional checkpoint policies on the same seeds"),
+        ("evaluate", evaluate, "Benchmark policies on seeded rounds"),
         ("train", train, "Train Double DQN from scratch or fine-tune existing weights"),
         ("evolve", evolve, "Tune a Polar Panic policy by playing against the built-in opponents"),
     ):
@@ -529,7 +570,7 @@ def main():
             command.add_argument("--workers", type=int, default=1, help="Number of concurrent native simulators")
         if name == "evaluate":
             command.add_argument("--episodes", type=int, default=10)
-            command.add_argument("--policy", choices=("idle", "random", "builtin", "checkpoint"), help="Evaluate only this policy")
+            command.add_argument("--policy", choices=("idle", "random", "builtin", "checkpoint", "planner"), help="Evaluate only this policy")
         if name == "evolve":
             command.add_argument("--episodes", type=int, default=24)
             command.add_argument("--trials", type=int, default=48)
@@ -563,8 +604,8 @@ def main():
             parser.error(f"--{flag.replace('_', '-')} must be positive")
     if args.command == "evaluate" and args.policy == "checkpoint" and args.weights is None:
         parser.error("--policy checkpoint requires --weights")
-    if args.command == "evaluate" and args.policy == "builtin" and args.arena != "polar-panic":
-        parser.error("--policy builtin requires Polar Panic")
+    if args.command == "evaluate" and args.policy in ("builtin", "planner") and args.arena != "polar-panic":
+        parser.error(f"--policy {args.policy} requires Polar Panic")
     if args.command == "train" and (args.demonstrations < 0 or (args.demonstrations and args.arena != "polar-panic")):
         parser.error("--demonstrations requires Polar Panic and a nonnegative count")
     if args.command == "train" and any(not 1 <= step < args.steps for step in args.checkpoint_step):

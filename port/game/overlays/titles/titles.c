@@ -715,7 +715,8 @@ void TitlesCheckIdle(void) {
                 g->heroChoice[i] = TRAINING_TINY;
             }
             g->heroes[i] = g->heroChoice[i];
-            g->heroCpu[i] = i >= match.players || (i == 0 && match.teacher);
+            g->heroCpu[i] = i >= match.players ||
+                            (i == 0 && (match.teacher == TRAINING_TEACHER || match.teacher == TRAINING_HYBRID));
         }
         ProcessControl.next_process = &LevelLoadProcess;
         return;

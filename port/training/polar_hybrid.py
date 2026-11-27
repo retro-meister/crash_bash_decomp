@@ -1,5 +1,4 @@
 import argparse
-from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
 import json
 import math
@@ -9,7 +8,7 @@ import time
 
 import numpy as np
 
-from crashball import Crashball, TINY, score, winner
+from crashball import Crashball, TINY, measure_native, score, winner
 from polar_ppo import OBS_SIZE, edge_potential, observation
 
 
@@ -25,36 +24,6 @@ def features(event):
 def open_workers(args, count, stack):
     return [stack.enter_context(Crashball(args.exe, args.data, arena="polar-panic", hero=TINY, hybrid=True))
             for _ in range(count)]
-
-
-def benchmark(args, workers, choose):
-    def run(env, seeds):
-        rows = []
-        for seed in seeds:
-            packet = env.reset(seed)
-            charges = overrides = 0
-            while packet["event"] == "charge":
-                action = choose(packet)
-                charges += 1
-                overrides += action != 0
-                packet = env.command(f"charge {action} 0")
-            if packet["event"] != "end":
-                raise RuntimeError(f"Unexpected benchmark packet {packet['event']}")
-            victory = winner(packet) if score(packet)[0] else -2
-            rows.append((seed, victory, packet["tick"], charges, overrides))
-        return rows
-
-    started = time.perf_counter()
-    with ThreadPoolExecutor(max_workers=len(workers)) as pool:
-        jobs = [pool.submit(run, env, range(args.seed + i, args.seed + args.episodes, len(workers)))
-                for i, env in enumerate(workers)]
-        rows = sorted(row for job in jobs for row in job.result())
-    _, outcomes, ticks, charges, overrides = zip(*rows)
-    elapsed = time.perf_counter() - started
-    wins, draws = outcomes.count(0), outcomes.count(-1)
-    return dict(episodes=args.episodes, wins=wins, losses=args.episodes - wins - draws, draws=draws,
-                charges=sum(charges), overrides=sum(overrides), ticks=sum(ticks),
-                seconds=round(elapsed, 3)), outcomes
 
 
 def branch_value(before, after):
@@ -184,7 +153,7 @@ def main():
                     choose = policy({name: checkpoint[name] for name in checkpoint.files}, margin if args.margin is None else args.margin)
             else:
                 choose = lambda packet: 0
-            result, outcomes = benchmark(args, workers, choose)
+            result, outcomes = measure_native(args, workers, choose)
             if args.outcomes:
                 args.outcomes.write_text(json.dumps(outcomes) + "\n")
             print(json.dumps(result))
